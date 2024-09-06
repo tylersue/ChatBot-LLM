@@ -1,0 +1,47 @@
+import torch
+from transformers import AutoTokenizer, AutoModelForCausalLM
+
+# Load a pre-trained language model and tokenizer
+model_name = "gpt2"  # You can use larger models like "gpt2-medium" or "gpt2-large" for better performance
+tokenizer = AutoTokenizer.from_pretrained(model_name)
+model = AutoModelForCausalLM.from_pretrained(model_name)
+
+# Add this line before using the tokenizer
+tokenizer.pad_token = tokenizer.eos_token
+
+# Function to generate response
+def generate_response(user_input, max_length=100):
+    # Prepare the input for the model
+    inputs = tokenizer(f"Human: {user_input}\nAI:", return_tensors="pt", padding=True, truncation=True)
+    
+    # Generate a response
+    output = model.generate(
+        inputs.input_ids,
+        attention_mask=inputs.attention_mask,  # Set the attention mask
+        max_length=max_length,
+        num_return_sequences=1,
+        no_repeat_ngram_size=2,
+        pad_token_id=tokenizer.pad_token_id  # Set the pad token ID
+    )
+    
+    # Decode the response
+    response = tokenizer.decode(output[0], skip_special_tokens=True)
+    
+    # Extract only the AI's response
+    ai_response = response.split("AI:")[-1].strip()
+    return ai_response
+
+# Main chatbot loop
+def chat_loop():
+    print("AI: Hello! How can I help you today?")
+    while True:
+        user_input = input("You: ")
+        if user_input.lower() == 'quit':
+            print("AI: Goodbye!")
+            break
+        response = generate_response(user_input)
+        print("AI:", response)
+
+# Run the chatbot
+if __name__ == "__main__":
+    chat_loop()
