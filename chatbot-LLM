@@ -1,46 +1,78 @@
 import torch
 from transformers import AutoTokenizer, AutoModelForCausalLM
+import numpy as np
 
-# Load a pre-trained language model and tokenizer
-model_name = "gpt2"  # You can use larger models like "gpt2-medium" or "gpt2-large" for better performance
+# Use a more advanced model
+model_name = "facebook/opt-1.3b"  # Upgraded to a larger model
 tokenizer = AutoTokenizer.from_pretrained(model_name)
 model = AutoModelForCausalLM.from_pretrained(model_name)
 
 # Add this line before using the tokenizer
 tokenizer.pad_token = tokenizer.eos_token
 
-# Function to generate response
-def generate_response(user_input, max_length=100):
-    # Prepare the input for the model
-    inputs = tokenizer(f"Human: {user_input}\nAI:", return_tensors="pt", padding=True, truncation=True)
+# Function to generate response with dynamic length
+def generate_response(user_input, conversation_history, max_length=200):
+    full_input = f"{conversation_history}Human: {user_input}\nAI:"
+    inputs = tokenizer(full_input, return_tensors="pt", padding=True, truncation=True)
     
-    # Generate a response
+    # Dynamic max_length based on input length
+    dynamic_max_length = min(max(len(inputs.input_ids[0]) + 50, max_length), 512)
+    
     output = model.generate(
         inputs.input_ids,
-        attention_mask=inputs.attention_mask,  # Set the attention mask
-        max_length=max_length,
-        num_return_sequences=1,
-        no_repeat_ngram_size=2,
-        pad_token_id=tokenizer.pad_token_id  # Set the pad token ID
+        attention_mask=inputs.attention_mask,
+        max_length=dynamic_max_length,
+        num_return_sequences=3,  # Generate multiple responses
+        no_repeat_ngram_size=3,
+        do_sample=True,
+        top_k=50,
+        top_p=0.95,
+        temperature=0.7,
+        pad_token_id=tokenizer.pad_token_id
     )
     
-    # Decode the response
-    response = tokenizer.decode(output[0], skip_special_tokens=True)
+    # Select the best response based on perplexity
+    responses = [tokenizer.decode(seq, skip_special_tokens=True).split("AI:")[-1].strip() for seq in output]
+    perplexities = [calculate_perplexity(response) for response in responses]
+    best_response = responses[np.argmin(perplexities)]
     
-    # Extract only the AI's response
-    ai_response = response.split("AI:")[-1].strip()
-    return ai_response
+    return best_response
 
-# Main chatbot loop
+# Function to calculate perplexity
+def calculate_perplexity(text):
+    inputs = tokenizer(text, return_tensors="pt")
+    with torch.no_grad():
+        outputs = model(**inputs, labels=inputs["input_ids"])
+    return torch.exp(outputs.loss).item()
+
+# Main chatbot loop with conversation management
 def chat_loop():
+    conversation_history = ""
     print("AI: Hello! How can I help you today?")
     while True:
         user_input = input("You: ")
         if user_input.lower() == 'quit':
             print("AI: Goodbye!")
             break
-        response = generate_response(user_input)
+        elif user_input.lower() == 'clear history':
+            conversation_history = ""
+            print("AI: Conversation history cleared.")
+            continue
+        
+        response = generate_response(user_input, conversation_history)
         print("AI:", response)
+        
+        # Updating conversation history with a sliding window
+        conversation_history += f"Human: {user_input}\nAI: {response}\n"
+        conversation_history = keep_recent_conversation(conversation_history)
+
+# Function to keep only recent conversation
+def keep_recent_conversation(history, max_tokens=1000):
+    tokens = tokenizer.encode(history)
+    if len(tokens) > max_tokens:
+        decoded = tokenizer.decode(tokens[-max_tokens:])
+        return decoded[decoded.find("\n")+1:]  # Start from the first complete line
+    return history
 
 # Run the chatbot
 if __name__ == "__main__":
