@@ -1,0 +1,77 @@
+import torch
+from transformers import AutoTokenizer, AutoModelForCausalLM
+import numpy as np
+
+# Use a smaller, faster model
+model_name = "distilgpt2"
+tokenizer = AutoTokenizer.from_pretrained(model_name)
+model = AutoModelForCausalLM.from_pretrained(model_name)
+
+# Add this line before using the tokenizer
+tokenizer.pad_token = tokenizer.eos_token
+
+# Function to generate response with dynamic length
+def generate_response(user_input, conversation_history, max_length=50):
+    full_input = f"{conversation_history}Human: {user_input}\nAI:"
+    inputs = tokenizer(full_input, return_tensors="pt", padding=True, truncation=True, max_length=128)
+    
+    dynamic_max_length = min(max(len(inputs.input_ids[0]) + 20, max_length), 128)
+    
+    try:
+        output = model.generate(
+            inputs.input_ids,
+            attention_mask=inputs.attention_mask,
+            max_length=dynamic_max_length,
+            num_return_sequences=1,
+            no_repeat_ngram_size=2,
+            do_sample=True,
+            top_k=50,
+            top_p=0.95,
+            temperature=0.7,
+            pad_token_id=tokenizer.pad_token_id
+        )
+    except Exception as e:
+        return "I'm sorry, I encountered an error while generating a response."
+
+    response = tokenizer.decode(output[0], skip_special_tokens=True, clean_up_tokenization_spaces=True).split("AI:")[-1].strip()
+    return response
+
+# Function to calculate perplexity (simplified for this model)
+def calculate_perplexity(text):
+    inputs = tokenizer(text, return_tensors="pt")
+    with torch.no_grad():
+        outputs = model(**inputs, labels=inputs["input_ids"])
+    return torch.exp(outputs.loss).item()
+
+# Main chatbot loop with conversation management
+def chat_loop():
+    conversation_history = ""
+    print("AI: Hello! How can I help you today?")
+    while True:
+        user_input = input("You: ")
+        if user_input.lower() == 'quit':
+            print("AI: Goodbye!")
+            break
+        elif user_input.lower() == 'clear history':
+            conversation_history = ""
+            print("AI: Conversation history cleared.")
+            continue
+        
+        response = generate_response(user_input, conversation_history)
+        print("AI:", response)
+        
+        # Updating conversation history with a sliding window
+        conversation_history += f"Human: {user_input}\nAI: {response}\n"
+        conversation_history = keep_recent_conversation(conversation_history)
+
+# Function to keep only recent conversation
+def keep_recent_conversation(history, max_tokens=500):
+    tokens = tokenizer.encode(history)
+    if len(tokens) > max_tokens:
+        decoded = tokenizer.decode(tokens[-max_tokens:])
+        return decoded[decoded.find("\n")+1:]  # Start from the first complete line
+    return history
+
+# Run the chatbot
+if __name__ == "__main__":
+    chat_loop()
